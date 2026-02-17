@@ -303,6 +303,9 @@ export const UpcomingTable: React.FunctionComponent<UpcomingTableProps> = ({
       Type: item.type,
       Release: item.release,
       'Release date': item.date,
+      Summary: item.details?.summary ?? '',
+      'Affected systems': item.details?.potentiallyAffectedSystemsCount ?? '',
+      'Tracking ticket': item.details?.trainingTicket ?? '',
     }));
     const csv = generateCsv(csvConfig)(data);
     download(csvConfig)(csv);
