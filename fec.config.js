@@ -1,7 +1,8 @@
 module.exports = {
   appUrl: '/insights/planning/',
   debug: true,
-  useProxy: true,
+  port: 8004,
+  useProxy: process.env.USE_PROXY !== 'false',
   proxyVerbose: true,
   localChrome: process.env.INSIGHTS_CHROME,
   chromePort: process.env.CHROME_PORT,
@@ -32,6 +33,9 @@ module.exports = {
   plugins: [],
   hotReload: process.env.HOT === 'true',
   moduleFederation: {
+    exposes: {
+      './HostLifecycle': './src/Components/HostLifecycle/HostLifecycle',
+    },
     exclude: ['react-router-dom'],
     shared: [
       {
