@@ -20,6 +20,7 @@ import { ErrorObject } from '../../types/ErrorObject';
 import SearchIcon from '@patternfly/react-icons/dist/esm/icons/search-icon';
 import LockIcon from '@patternfly/react-icons/dist/esm/icons/lock-icon';
 import {
+  HOST_UUID_LOOKUP_TIMEOUT_MS,
   getAccessibleHostUuids,
   getAllLifecycleAppstreams,
   getAllLifecycleSystems,
@@ -534,11 +535,17 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     const catalogResults = Promise.allSettled([allSystemsDone, allAppsDone]);
 
     try {
-      const uuidResponse = await getAccessibleHostUuids(signal);
+      const uuidResponse = await getAccessibleHostUuids(signal, HOST_UUID_LOOKUP_TIMEOUT_MS);
       if (signal.aborted) {
         return;
       }
-      const hostIds = uuidResponse.data ?? [];
+      const hostIds = uuidResponse?.data;
+      if (
+        !Array.isArray(hostIds) ||
+        !hostIds.every((hostId) => typeof hostId === 'string' && hostId.trim().length > 0)
+      ) {
+        throw new Error('Invalid host UUID response: expected data to be an array of non-empty host IDs.');
+      }
 
       if (hostIds.length === 0) {
         rememberRelevantSystems([]);
@@ -1132,39 +1139,41 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
                 }
               />
             )}
-          <LifecycleFilters
-            nameFilter={nameFilter}
-            setNameFilter={(name: string) => onNameFilterChange(name)}
-            setIsLoading={(isLoading: boolean) => setIsLoading(isLoading)}
-            setError={(error: ErrorObject) => setError(error)}
-            lifecycleDropdownValue={lifecycleDropdownValue}
-            setLifecycleDropdownValue={setLifecycleDropdownValue}
-            onLifecycleDropdownSelect={onLifecycleDropdownSelect}
-            selectedChartSortBy={chartSortByValue}
-            updateChartSortValue={setOrderingStates}
-            onExport={handleExport}
-            isExportDisabled={exportDisabled}
-            exportDisabledTooltipContent={exportDisabledTooltipContent}
-            selectedViewFilter={selectedViewFilter}
-            handleViewFilterChange={handleViewFilterChange}
-            noDataAvailable={noDataAvailable}
-            onFilterFieldChange={(field) => {
-              setFilterField(field);
-            }}
-            onRhelVersionsChange={(versions) => {
-              setRhelVersionFilter(versions);
-              updateFilters({ versions });
-            }}
-            onStatusesChange={(statuses) => {
-              setStatusFilter(statuses);
-              updateFilters({ statuses });
-            }}
-            rhelVersionOptions={rhelVersionOptions}
-            initialRhelVersions={rhelVersionFilter}
-            initialStatuses={statusFilter}
-            resetOnAppsSwitchKey={appsSwitchKey}
-            disableInstalledOnly={disableInstalledOnly}
-          />
+          <React.Suspense fallback={<Spinner aria-label="Loading lifecycle filters" />}>
+            <LifecycleFilters
+              nameFilter={nameFilter}
+              setNameFilter={(name: string) => onNameFilterChange(name)}
+              setIsLoading={(isLoading: boolean) => setIsLoading(isLoading)}
+              setError={(error: ErrorObject) => setError(error)}
+              lifecycleDropdownValue={lifecycleDropdownValue}
+              setLifecycleDropdownValue={setLifecycleDropdownValue}
+              onLifecycleDropdownSelect={onLifecycleDropdownSelect}
+              selectedChartSortBy={chartSortByValue}
+              updateChartSortValue={setOrderingStates}
+              onExport={handleExport}
+              isExportDisabled={exportDisabled}
+              exportDisabledTooltipContent={exportDisabledTooltipContent}
+              selectedViewFilter={selectedViewFilter}
+              handleViewFilterChange={handleViewFilterChange}
+              noDataAvailable={noDataAvailable}
+              onFilterFieldChange={(field) => {
+                setFilterField(field);
+              }}
+              onRhelVersionsChange={(versions) => {
+                setRhelVersionFilter(versions);
+                updateFilters({ versions });
+              }}
+              onStatusesChange={(statuses) => {
+                setStatusFilter(statuses);
+                updateFilters({ statuses });
+              }}
+              rhelVersionOptions={rhelVersionOptions}
+              initialRhelVersions={rhelVersionFilter}
+              initialStatuses={statusFilter}
+              resetOnAppsSwitchKey={appsSwitchKey}
+              disableInstalledOnly={disableInstalledOnly}
+            />
+          </React.Suspense>
           <React.Suspense fallback={<LifecycleContentSkeleton />}>{renderContent()}</React.Suspense>
         </Card>
       </Stack>

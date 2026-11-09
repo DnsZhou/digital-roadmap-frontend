@@ -60,13 +60,15 @@ describe('useBatchLoad', () => {
     act(() => reportSlow(true));
     expect(result.current.isSlow).toBe(true);
 
-    act(() => reportSlow(false));
-    expect(result.current.isSlow).toBe(false);
-
     act(() => reportProgress({ completed: 2, total: 5 }));
     expect(result.current.isSlow).toBe(false);
     expect(result.current.progress).toEqual({ completed: 2, total: 5 });
     expect(result.current.status).toBe('loading');
+
+    act(() => reportSlow(true));
+    expect(result.current.isSlow).toBe(true);
+    act(() => reportSlow(false));
+    expect(result.current.isSlow).toBe(false);
 
     await act(async () => {
       resolveLoad('loaded');

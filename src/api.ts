@@ -172,14 +172,11 @@ export const getAllLifecycleSystems = async (signal?: AbortSignal) => {
   return getResponseOrError(response);
 };
 
-export const getAccessibleHostUuids = async (signal?: AbortSignal): Promise<AccessibleHostUuidsResponse> => {
-  return requestBackend(
-    'get',
-    DR_API.concat(DR_LIFECYCLE_HOST_UUIDS),
-    undefined,
-    signal,
-    HOST_UUID_LOOKUP_TIMEOUT_MS
-  );
+export const getAccessibleHostUuids = async (
+  signal?: AbortSignal,
+  timeout?: number
+): Promise<AccessibleHostUuidsResponse> => {
+  return requestBackend('get', DR_API.concat(DR_LIFECYCLE_HOST_UUIDS), undefined, signal, timeout);
 };
 
 export const getRelevantLifecycleAppstreamsForHosts = async (hostIds: string[], signal?: AbortSignal) => {

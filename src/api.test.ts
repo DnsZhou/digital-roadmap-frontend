@@ -29,12 +29,17 @@ describe('getAccessibleHostUuids', () => {
 
     await expect(getAccessibleHostUuids()).resolves.toEqual(body);
     expect(request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        method: 'get',
-        url: '/api/roadmap/v1/lifecycle/host-uuids',
-        timeout: HOST_UUID_LOOKUP_TIMEOUT_MS,
-      })
+      expect.objectContaining({ method: 'get', url: '/api/roadmap/v1/lifecycle/host-uuids' })
     );
+    expect(request.mock.calls[0][0]).not.toHaveProperty('timeout');
+  });
+
+  it('applies the caller-provided timeout to the host uuid request', async () => {
+    request.mockResolvedValue({ status: 200, data: { meta: { count: 1, total: 1 }, data: ['host-1'] } });
+
+    await getAccessibleHostUuids(undefined, HOST_UUID_LOOKUP_TIMEOUT_MS);
+
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ timeout: HOST_UUID_LOOKUP_TIMEOUT_MS }));
   });
 
   it('forwards an abort signal on the host uuid request', async () => {

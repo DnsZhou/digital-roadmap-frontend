@@ -14,6 +14,7 @@ if (!global.structuredClone) {
 
 // Mock the API functions
 jest.mock('../../api', () => ({
+  HOST_UUID_LOOKUP_TIMEOUT_MS: 60_000,
   getAccessibleHostUuids: jest.fn(),
   getAllLifecycleAppstreams: jest.fn(),
   getAllLifecycleSystems: jest.fn(),
@@ -318,6 +319,7 @@ describe('LifecycleTab Component', () => {
 
       await waitFor(() => {
         expect(mockApiCalls.getAccessibleHostUuids).toHaveBeenCalledTimes(1);
+        expect(mockApiCalls.getAccessibleHostUuids).toHaveBeenCalledWith(expect.any(AbortSignal), 60_000);
         expect(mockApiCalls.getAllLifecycleSystems).toHaveBeenCalledTimes(1);
         expect(mockApiCalls.getAllLifecycleAppstreams).toHaveBeenCalledTimes(1);
         expect(mockApiCalls.getRelevantLifecycleSystems).toHaveBeenCalledTimes(1);
@@ -707,6 +709,22 @@ describe('LifecycleTab Component', () => {
         expect(hasChart || hasTable || hasEmptyState).toBeTruthy();
       });
     });
+  });
+
+  test.each([
+    ['missing data', { meta: { count: 1, total: 1 } }],
+    ['null data', { meta: { count: 1, total: 1 }, data: null }],
+    ['non-array data', { meta: { count: 1, total: 1 }, data: 'host-1' }],
+    ['empty host ID', { meta: { count: 1, total: 1 }, data: [''] }],
+  ])('shows a retryable error for a malformed host UUID response with %s', async (_caseName, response) => {
+    mockApiCalls.getAccessibleHostUuids.mockResolvedValue(response);
+
+    renderWithRouter(<LifecycleTab />);
+
+    expect(
+      await screen.findByText('Invalid host UUID response: expected data to be an array of non-empty host IDs.')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry all' })).toBeInTheDocument();
   });
 
   describe('Independent readiness and live filters', () => {
@@ -1358,7 +1376,7 @@ describe('Dynamic RHEL version options', () => {
       expect(screen.getByTestId('lifecycle-filters')).toBeInTheDocument();
     });
 
-    const list = screen.getByTestId('rhel-version-options');
+    const list = await screen.findByTestId('rhel-version-options');
     expect(list).toBeInTheDocument();
     expect(list).toHaveTextContent('RHEL 8');
     expect(list).toHaveTextContent('RHEL 9');
@@ -1390,7 +1408,7 @@ describe('Dynamic RHEL version options', () => {
     (api.getRelevantLifecycleSystems as jest.Mock).mockResolvedValue({ data: mockSystemData });
 
     renderWithRouter(<LifecycleTab />);
-    const list = screen.getByTestId('rhel-version-options');
+    const list = await screen.findByTestId('rhel-version-options');
     await waitFor(() => expect(list).toHaveTextContent('RHEL 9'));
     expect(list).toHaveTextContent('RHEL 8');
     expect(screen.getByTestId('version-selection')).toHaveTextContent('RHEL 9');
