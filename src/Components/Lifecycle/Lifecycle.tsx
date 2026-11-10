@@ -490,9 +490,9 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
               );
               cacheRef.current.allSystems = allSystems;
               allSystemsReadyRef.current = true;
+              setRhelVersionOptions(computeRhelVersionOptions(allSystems));
               setAllSystemsStatus('ready');
               setAllSystemsError(undefined);
-              setRhelVersionOptions(computeRhelVersionOptions(allSystems));
               if (viewRef.current === 'all' && dropdownRef.current === RHEL_SYSTEMS_DROPDOWN_VALUE) {
                 syncDisplayedView(RHEL_SYSTEMS_DROPDOWN_VALUE, 'all');
               }

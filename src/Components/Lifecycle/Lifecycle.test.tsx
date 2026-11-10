@@ -1434,4 +1434,27 @@ describe('Dynamic RHEL version options', () => {
     });
     await waitFor(() => expect(list).not.toHaveTextContent('RHEL 8'));
   });
+
+  test('preserves a valid URL version when the All catalog resolves before Relevant rows', async () => {
+    window.history.replaceState({}, '', '/?lifecycleDropdown=rhel-systems&versions=RHEL%209');
+    (api.getAllLifecycleSystems as jest.Mock).mockResolvedValue({
+      data: mockSystemData.filter((item) => item.major === 9),
+    });
+    const relevant = deferred<{ data: SystemLifecycleChanges[] }>();
+    (api.getRelevantLifecycleSystems as jest.Mock).mockReturnValue(relevant.promise);
+
+    render(
+      <BrowserRouter>
+        <LifecycleTab />
+      </BrowserRouter>,
+      { legacyRoot: true }
+    );
+
+    expect(await screen.findByTestId('version-selection')).toHaveTextContent('RHEL 9');
+
+    await act(async () => {
+      relevant.resolve({ data: mockSystemData.filter((item) => item.major === 9) });
+    });
+    expect(screen.getByTestId('version-selection')).toHaveTextContent('RHEL 9');
+  });
 });
