@@ -63,6 +63,27 @@ describe('LifecycleModalWindow on-demand requests', () => {
     expect(screen.getByRole('button', { name: 'server-a' })).toBeInTheDocument();
   });
 
+  test('forwards the exact app stream parent identity only after opening', async () => {
+    const streamId = JSON.stringify(['Node.js 22', 'Node.js 22', 8, null]);
+    jest.mocked(getAppStreamSystems).mockResolvedValue(response);
+    await act(async () => {
+      render(
+        <LifecycleModalWindow
+          {...props}
+          identifier={{ type: 'appStream', name: 'nodejs', osMajor: 8, osMinor: null, streamId }}
+        />
+      );
+    });
+    expect(getAppStreamSystems).toHaveBeenCalledWith('nodejs', 8, null, {
+      offset: 0,
+      limit: 10,
+      search: undefined,
+      sort_order: 'asc',
+      stream_id: streamId,
+    });
+    expect(getRhelSystems).not.toHaveBeenCalled();
+  });
+
   test('retries a failed first-page request and displays the recovered systems', async () => {
     mockGetRhelSystems.mockRejectedValueOnce(new Error('Temporary timeout'));
     await act(async () => {

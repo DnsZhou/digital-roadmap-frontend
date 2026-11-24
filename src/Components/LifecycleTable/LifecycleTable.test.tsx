@@ -457,6 +457,7 @@ describe('LifecycleTable', () => {
         expect(identifier.name).toBe('nodejs');
         expect(identifier.osMajor).toBe(9);
         expect(identifier.osMinor).toBe(0);
+        expect(JSON.parse(identifier.streamId)).toEqual(['Node.js 18', 'Node.js 18', 9, 0]);
       });
     });
 

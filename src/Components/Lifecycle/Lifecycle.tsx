@@ -1,5 +1,5 @@
 import './Lifecycle.scss';
-import React, { lazy, useEffect, useState } from 'react';
+import React, { lazy, useEffect, useRef, useState } from 'react';
 import '@patternfly/react-core/dist/styles/base.css';
 import {
   Alert,
@@ -18,10 +18,6 @@ import { ErrorObject } from '../../types/ErrorObject';
 import SearchIcon from '@patternfly/react-icons/dist/esm/icons/search-icon';
 import LockIcon from '@patternfly/react-icons/dist/esm/icons/lock-icon';
 import {
-  getAllLifecycleAppstreams,
-  getAllLifecycleSystems,
-  getRelevantLifecycleAppstreams,
-  getRelevantLifecycleSystems,
   getV1AllLifecycleAppstreams,
   getV1AllLifecycleSystems,
   getV1RelevantLifecycleAppstreams,
@@ -52,6 +48,7 @@ import ErrorState from '@patternfly/react-component-groups/dist/dynamic/ErrorSta
 import { getNewName } from '../../utils/utils';
 import { ExtendedFilter } from '../../types/Filter';
 import { ExclamationCircleIcon } from '@patternfly/react-icons';
+import { LifecycleScope, loadLifecycleData } from './lifecycleData';
 
 // Define DEFAULT_FILTERS with the ExtendedFilter type
 const DEFAULT_FILTERS: ExtendedFilter = {
@@ -79,7 +76,7 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
   const [lifecycleDropdownValue, setLifecycleDropdownValue] = React.useState<string>(DEFAULT_DROPDOWN_VALUE);
   const [chartSortByValue, setChartSortByValue] = React.useState<string>(DEFAULT_CHART_SORTBY_VALUE);
   const [chartDirection, setChartDirection] = React.useState<string>('asc');
-  const [filters, setFilters] = useState<ExtendedFilter>(DEFAULT_FILTERS);
+  const filtersRef = useRef<ExtendedFilter>(DEFAULT_FILTERS);
   // Add state for view filter (all, installed-only, installed-and-related)
   const [selectedViewFilter, setSelectedViewFilter] = useState<string>('installed-only');
 
@@ -90,7 +87,8 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
   const [installedAppData, setInstalledAppData] = useState<Stream[]>([]);
   const [relatedSystemData, setRelatedSystemData] = useState<SystemLifecycleChanges[]>([]);
   const [relatedAppData, setRelatedAppData] = useState<Stream[]>([]);
-  const [dataInitialized, setDataInitialized] = useState<boolean>(false);
+  const [loadedDropdown, setLoadedDropdown] = useState<string | null>(null);
+  const activeRequest = useRef(0);
 
   const [filterField, setFilterField] = useState<'Name' | 'Version' | 'Status'>('Name');
   const [rhelVersionOptions, setRhelVersionOptions] = useState<string[]>([]);
@@ -108,14 +106,17 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
 
   const updateFilters = React.useCallback(
     (patch: Partial<ExtendedFilter> | ((prev: ExtendedFilter) => Partial<ExtendedFilter>)) => {
-      setFilters((prev) => {
-        const partial = typeof patch === 'function' ? patch(prev) : patch;
-        const next = { ...prev, ...partial };
-        setSearchParams(buildURL(next));
-        return next;
-      });
+      // Merge consecutive patches before navigating. Navigation must not run in
+      // a React state updater: the shared router synchronously notifies listeners.
+      const partial = typeof patch === 'function' ? patch(filtersRef.current) : patch;
+      const next = { ...filtersRef.current, ...partial };
+      filtersRef.current = next;
+      const nextSearch = buildURL(next);
+      if (nextSearch.toString() !== searchParams.toString()) {
+        setSearchParams(nextSearch);
+      }
     },
-    [setSearchParams]
+    [searchParams, setSearchParams]
   );
 
   const getDefaultOrder = (sortBy: string): 'asc' | 'desc' => {
@@ -292,7 +293,6 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     const wasAppStream = isAppStream(lifecycleDropdownValue);
     const willBeAppStream = isAppStream(value);
     const isCrossDomainSwitch = wasAppStream !== willBeAppStream;
-    const nextNameFilter = isCrossDomainSwitch ? '' : nameFilter;
 
     if (isCrossDomainSwitch) {
       setNameFilter('');
@@ -307,37 +307,8 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     setLifecycleDropdownValue(value);
     updateFilters({ lifecycleDropdown: value });
 
-    const disableInstalledOnlyValue = computeDisableInstalledOnly(value);
-    setDisableInstalledOnly(disableInstalledOnlyValue);
-
-    // Set noDataAvailable based on the specific dropdown type
-    setNoDataAvailable(shouldShowNoDataAvailable(value));
-
-    // Auto-switch to 'all' view if no data in current view
-    let effectiveViewFilter = selectedViewFilter;
-
-    if (disableInstalledOnlyValue && effectiveViewFilter === 'installed-only') {
-      effectiveViewFilter = 'installed-and-related';
-      setSelectedViewFilter(effectiveViewFilter);
-      updateFilters({ viewFilter: effectiveViewFilter });
-    }
-
-    if (!checkDataAvailability(value, effectiveViewFilter) && effectiveViewFilter !== 'all') {
-      const hasInstalledAndRelated = checkDataAvailability(value, 'installed-and-related');
-      if (effectiveViewFilter === 'installed-only' && hasInstalledAndRelated) {
-        effectiveViewFilter = 'installed-and-related';
-      } else {
-        effectiveViewFilter = 'all';
-      }
-      setSelectedViewFilter(effectiveViewFilter);
-      updateFilters({ viewFilter: effectiveViewFilter });
-    }
-
-    // Apply all current filters to the new data
-    processData(effectiveViewFilter, value, nextNameFilter);
-
-    // Schedule resetting the "isSwitchingView" flag after the current microtask to avoid rendering conflicts.
-    queueMicrotask?.(() => setIsSwitchingView(false));
+    // Availability and fallback must use the selected scope's response, not the previous scope's data.
+    initializeData(selectedViewFilter, value);
   };
 
   const computeDisableInstalledOnly = (
@@ -362,40 +333,33 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     return installedCount === 0 && relatedCount > 0;
   };
 
-  // First data fetch - called only once
-  const initializeData = async (viewFilter: string) => {
+  // Load only the selected scope; the loader retains each successful response until page refresh.
+  const initializeData = async (viewFilter: string, currentDropdown: string, initialLoad = false) => {
+    const request = ++activeRequest.current;
     setIsLoading(true);
+    setError(undefined);
     setNoDataAvailable(false);
+    setDisableInstalledOnly(false);
 
     try {
-      // Fetch data in parallel
-      const results = await Promise.allSettled([
-        getRelevantLifecycleSystems(),
-        getRelevantLifecycleAppstreams(),
-        getAllLifecycleSystems(),
-        getAllLifecycleAppstreams(),
-      ]);
-
-      // If any of them has an error, propagate the exception to be handled and error is displayed
-      // The order of items in array needs to match with order in the Promise.allSettled()
-      const [relevantSystemResponse, relevantAppResponse, allSystemResponse, allAppResponse] = results.map(
-        (result) => {
-          if (result.status === 'fulfilled') {
-            return result.value;
-          }
-          // if not fullfiled, there is a exception
-          throw result.reason;
-        }
-      );
+      const scope: LifecycleScope =
+        currentDropdown === RHEL_SYSTEMS_DROPDOWN_VALUE
+          ? 'rhel'
+          : currentDropdown === RHEL_8_STREAMS_DROPDOWN_VALUE
+          ? 8
+          : currentDropdown === RHEL_10_STREAMS_DROPDOWN_VALUE
+          ? 10
+          : 9;
+      const response = await loadLifecycleData(scope);
+      // Older requests can populate the cache, but cannot change the active view or its error/loading state.
+      if (request !== activeRequest.current) return;
 
       // Store all fetched data in state
-      const relatedInstalledSystems = relevantSystemResponse.data || [];
-      const relatedInstalledApps = relevantAppResponse.data || [];
+      const relatedInstalledSystems = response.relevantSystems;
+      const relatedInstalledApps = response.relevantApps;
       // filter out system data with null minor field
-      const allSystems = (allSystemResponse.data || []).filter(
-        (datum: SystemLifecycleChanges) => datum.minor !== null
-      );
-      const allApps = allAppResponse.data || [];
+      const allSystems = response.allSystems.filter((datum: SystemLifecycleChanges) => datum.minor !== null);
+      const allApps = response.allApps;
 
       // Filter out from the instlled & related list of Stream and SystemLifecycleChanges only the installed ones
       // API is set to provide instlled & related and by this filter we can lower the number of API requests
@@ -412,12 +376,10 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
       setInstalledAppData(installedApps);
       setInstalledSystemData(installedSystems);
 
-      // Mark data as initialized
-      setDataInitialized(true);
+      setLoadedDropdown(currentDropdown);
 
       // Use the explicitly passed viewFilter or default to selectedViewFilter
       let currentViewFilter = viewFilter || selectedViewFilter;
-      const currentDropdown = dropdownQueryParam || DEFAULT_DROPDOWN_VALUE;
 
       // Check if there's data available for the current dropdown and view filter
       const hasDataForCurrentView = checkDataAvailability(
@@ -503,7 +465,19 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
 
         // Apply filters based on URL parameters
         // Directly using the data we already have instead of relying on state variables
-        filterInitialData(appStreams, updatedSystems);
+        if (initialLoad) {
+          filterInitialData(appStreams, updatedSystems);
+        } else {
+          const sameDomain = isAppStream(currentDropdown) === isAppStream(lifecycleDropdownValue);
+          applyAllActiveFilters(
+            currentDropdown === RHEL_SYSTEMS_DROPDOWN_VALUE ? updatedSystems : appStreams,
+            currentDropdown,
+            sameDomain ? nameFilter : '',
+            sameDomain ? filterField : 'Name',
+            sameDomain ? rhelVersionFilter : [],
+            sameDomain ? statusFilter : []
+          );
+        }
       } else {
         // If no data, at least initialize empty arrays
         setFilteredTableData([]);
@@ -513,7 +487,7 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
       // calculate RHEL version options
       const dynOptions = computeRhelVersionOptions(allSystems);
       setRhelVersionOptions(dynOptions);
-      if (versionsParam) {
+      if (initialLoad && versionsParam) {
         const wanted = decodeURIComponent(versionsParam)
           .split(',')
           .map((s) => s.trim())
@@ -523,7 +497,7 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
 
         updateFilters({ versions: valid });
 
-        const finalDropdownValue = dropdownQueryParam || DEFAULT_DROPDOWN_VALUE;
+        const finalDropdownValue = currentDropdown;
         if (finalDropdownValue === RHEL_SYSTEMS_DROPDOWN_VALUE) {
           const dataForSystems = updateLifecycleData(systemData);
           setSystemLifecycleChanges(dataForSystems);
@@ -536,13 +510,13 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
             statusFilter
           );
         }
-      } else {
+      } else if (currentDropdown !== RHEL_SYSTEMS_DROPDOWN_VALUE) {
         setRhelVersionFilter([]);
       }
 
       // Set noDataAvailable based on the actual dropdown that will be used
       // Pass the actual fetched data instead of relying on state
-      const finalDropdownValue = dropdownQueryParam || DEFAULT_DROPDOWN_VALUE;
+      const finalDropdownValue = currentDropdown;
       const noDataValue = shouldShowNoDataAvailable(
         finalDropdownValue,
         relatedInstalledSystems,
@@ -575,10 +549,14 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
 
       setNoDataAvailable(noDataValue);
     } catch (error: any) {
+      if (request !== activeRequest.current) return;
       console.error('Error fetching lifecycle changes:', error);
       setError({ message: error.message, status_code: error.status_code });
     } finally {
-      setIsLoading(false);
+      if (request === activeRequest.current) {
+        setIsLoading(false);
+        setIsSwitchingView(false);
+      }
     }
   };
 
@@ -661,9 +639,8 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
 
   // Updated fetchData that uses cached data
   const fetchData = (viewFilter = selectedViewFilter) => {
-    if (!dataInitialized) {
-      // First load - initialize all data with the explicit viewFilter
-      initializeData(viewFilter);
+    if (loadedDropdown !== lifecycleDropdownValue || isLoading || error) {
+      initializeData(viewFilter, lifecycleDropdownValue);
     } else {
       let effectiveViewFilter = viewFilter;
       // Already have data - just process with current filter
@@ -867,7 +844,10 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     updateFilters(() => initialFilters);
 
     // Initialize data with the correct view filter
-    fetchData(initialViewFilter);
+    initializeData(initialViewFilter, initialFilters.lifecycleDropdown ?? DEFAULT_DROPDOWN_VALUE, true);
+    return () => {
+      activeRequest.current += 1;
+    };
   }, []);
 
   useEffect(() => {
@@ -989,15 +969,15 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     setNameFilter('');
     setLifecycleDropdownValue(DEFAULT_DROPDOWN_VALUE);
     setChartSortByValue(DEFAULT_CHART_SORTBY_VALUE);
-    setFilters(DEFAULT_FILTERS);
+    filtersRef.current = DEFAULT_FILTERS;
     setSelectedViewFilter('installed-only');
     setFilterField('Name');
     setRhelVersionFilter([]);
     setStatusFilter([]);
     setSearchParams(buildURL(DEFAULT_FILTERS));
 
-    // Use the cached data
-    fetchData('installed-only');
+    // Reload the default scope from cache, even when clearing filters from another scope.
+    initializeData('installed-only', DEFAULT_DROPDOWN_VALUE);
   };
 
   // Helper function to filter app data based on dropdown value
@@ -1097,7 +1077,7 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     }
   };
 
-  if (isLoading) {
+  if (isLoading && loadedDropdown === null) {
     return (
       <div>
         <Bullseye>
@@ -1156,7 +1136,8 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     </Bullseye>
   );
 
-  if (error) {
+  const renderLoadError = () => {
+    if (!error) return null;
     if (String(error.message) === 'Error: Workspace filtering is not yet implemented') {
       // corner case with workspace filtering, we need different error message
       return lockedState;
@@ -1167,7 +1148,7 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
     } else {
       return <ErrorState titleText="Failed to load data" bodyText={String(error.message)} />;
     }
-  }
+  };
 
   const emptyState = (
     <Bullseye>
@@ -1191,6 +1172,18 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
       </Bullseye>
     );
 
+    if (isLoading || isSwitchingView) return LoadingComponent;
+    if (error) {
+      return (
+        <>
+          {renderLoadError()}
+          <Bullseye>
+            <Button onClick={() => initializeData(selectedViewFilter, lifecycleDropdownValue)}>Retry</Button>
+          </Bullseye>
+        </>
+      );
+    }
+
     // Check if any filters are active
     const hasActiveFilters = nameFilter !== '' || rhelVersionFilter.length > 0 || statusFilter.length > 0;
 
@@ -1208,14 +1201,8 @@ const LifecycleTab: React.FC<React.PropsWithChildren> = () => {
         ? (filteredChartData as SystemLifecycleChanges[]).some((d) => typeof d.major === 'number')
         : (filteredChartData as Stream[]).some((d) => typeof d.os_major === 'number'));
 
-    if (isSwitchingView) {
-      return LoadingComponent;
-    }
-
     if (!dataReadyForView) {
-      return isLoading ? (
-        LoadingComponent
-      ) : (
+      return (
         <LifecycleTable
           data={filteredTableData}
           viewFilter={selectedViewFilter}

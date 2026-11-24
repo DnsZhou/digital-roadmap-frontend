@@ -176,15 +176,11 @@ export const LifecycleFilters: React.FunctionComponent<LifecycleFiltersProps> = 
 
   // When filter select options changes
   React.useEffect(() => {
-    setSelectedRhelVersions((prev) => {
-      const intersection = prev.filter((v) => rhelVersionOptions.includes(v));
-      const next = intersection.length > 0 ? intersection : [];
-      if (hasInitializedFromParent.current && JSON.stringify(prev) !== JSON.stringify(next)) {
-        onRhelVersionsChange?.(next);
-      }
-      return next;
-    });
-  }, [rhelVersionOptions]);
+    const next = selectedRhelVersions.filter((v) => rhelVersionOptions.includes(v));
+    if (JSON.stringify(selectedRhelVersions) === JSON.stringify(next)) return;
+    setSelectedRhelVersions(next);
+    if (hasInitializedFromParent.current) onRhelVersionsChange?.(next);
+  }, [rhelVersionOptions, selectedRhelVersions, onRhelVersionsChange]);
 
   // Combined effect to handle initialization from URL parameters
   React.useEffect(() => {
@@ -222,8 +218,11 @@ export const LifecycleFilters: React.FunctionComponent<LifecycleFiltersProps> = 
   const prevResetKey = React.useRef<number | undefined>(resetOnAppsSwitchKey);
   React.useEffect(() => {
     if (resetOnAppsSwitchKey === undefined) return;
+    const previousKey = prevResetKey.current;
+    // Record the reset before notifying the parent/router, which can re-render.
+    prevResetKey.current = resetOnAppsSwitchKey;
     // Only reset if the key has changed from a previous value (not on initial mount)
-    if (prevResetKey.current !== undefined && prevResetKey.current !== resetOnAppsSwitchKey) {
+    if (previousKey !== undefined && previousKey !== resetOnAppsSwitchKey) {
       setNameFilter('');
       setSelectedRhelVersions([]);
       onRhelVersionsChange?.([]);
@@ -233,7 +232,6 @@ export const LifecycleFilters: React.FunctionComponent<LifecycleFiltersProps> = 
       onStatusesChange?.([]);
       onFilterFieldChange?.('Name');
     }
-    prevResetKey.current = resetOnAppsSwitchKey;
   }, [resetOnAppsSwitchKey, onRhelVersionsChange, onStatusesChange, onFilterFieldChange]);
 
   const handleItemClick = (event: React.MouseEvent<any> | React.KeyboardEvent | MouseEvent) => {
@@ -325,11 +323,13 @@ export const LifecycleFilters: React.FunctionComponent<LifecycleFiltersProps> = 
     const v = String(value);
     const checked = (event?.target as HTMLInputElement | undefined)?.checked ?? false;
 
-    setSelectedRhelVersions((prev) => {
-      const next = checked ? (prev.includes(v) ? prev : [...prev, v]) : prev.filter((x) => x !== v);
-      onRhelVersionsChange?.(next);
-      return next;
-    });
+    const next = checked
+      ? selectedRhelVersions.includes(v)
+        ? selectedRhelVersions
+        : [...selectedRhelVersions, v]
+      : selectedRhelVersions.filter((x) => x !== v);
+    setSelectedRhelVersions(next);
+    onRhelVersionsChange?.(next);
   };
 
   // App streams field toggle handlers
@@ -348,13 +348,15 @@ export const LifecycleFilters: React.FunctionComponent<LifecycleFiltersProps> = 
     const v = String(value);
     const checked = (event?.target as HTMLInputElement | undefined)?.checked ?? false;
 
-    setSelectedStatuses((prev) => {
-      const next = checked ? (prev.includes(v) ? prev : [...prev, v]) : prev.filter((x) => x !== v);
-      // Convert display labels to API values before passing to parent
-      const apiValues = next.map((displayLabel) => STATUS_DISPLAY_TO_VALUE[displayLabel] || displayLabel);
-      onStatusesChange?.(apiValues);
-      return next;
-    });
+    const next = checked
+      ? selectedStatuses.includes(v)
+        ? selectedStatuses
+        : [...selectedStatuses, v]
+      : selectedStatuses.filter((x) => x !== v);
+    setSelectedStatuses(next);
+    // Convert display labels to API values before passing to parent.
+    const apiValues = next.map((displayLabel) => STATUS_DISPLAY_TO_VALUE[displayLabel] || displayLabel);
+    onStatusesChange?.(apiValues);
   };
 
   const handleClearAllFilters = () => {

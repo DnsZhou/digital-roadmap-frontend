@@ -32,7 +32,7 @@ import ExclamationCircleIcon from '@patternfly/react-icons/dist/esm/icons/exclam
 
 export type SystemsIdentifier =
   | { type: 'rhel'; major: number; minor: number | null; lifecycleType: string }
-  | { type: 'appStream'; name: string; osMajor: number; osMinor?: number | null }
+  | { type: 'appStream'; name: string; osMajor: number; osMinor?: number | null; streamId?: string }
   | { type: 'upcoming'; name: string; release: string };
 
 interface ModalWindowProps {
@@ -92,7 +92,10 @@ const OpenLifecycleModalWindow: React.FunctionComponent<ModalWindowProps> = ({
             response = await getRhelSystems(identifier.major, identifier.minor, identifier.lifecycleType, params);
             break;
           case 'appStream':
-            response = await getAppStreamSystems(identifier.name, identifier.osMajor, identifier.osMinor, params);
+            response = await getAppStreamSystems(identifier.name, identifier.osMajor, identifier.osMinor, {
+              ...params,
+              ...(identifier.streamId ? { stream_id: identifier.streamId } : {}),
+            });
             break;
           case 'upcoming':
             response = await getUpcomingSystems(identifier.name, identifier.release, params);

@@ -1,5 +1,5 @@
 export const DR_API = '/api/roadmap/v2';
-// TODO: Remove after v2 supports both export (RHINENG-31151/31152) and unknown-minor RHEL host details.
+// TODO: Remove after v2 supports export (RHINENG-31151/31152).
 export const DR_API_V1 = '/api/roadmap/v1';
 export const DR_RELEASE_NOTES = '/release-notes';
 export const DR_RELEVANT_LIFECYCLE_SYSTEMS = '/relevant/lifecycle/rhel';

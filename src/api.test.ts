@@ -1,5 +1,12 @@
 import axios from 'axios';
-import { ApiError, getAppStreamSystems, getRhelSystems, getUpcomingSystems } from './api';
+import {
+  ApiError,
+  getAllLifecycleAppstreams,
+  getAppStreamSystems,
+  getRelevantLifecycleAppstreams,
+  getRhelSystems,
+  getUpcomingSystems,
+} from './api';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -14,6 +21,26 @@ const mockSystemsResponse = {
     ],
   },
 };
+
+describe('Lifecycle AppStream list scope', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each([8, 9, 10])('requests only major %i for counts and the static catalog', async (major) => {
+    mockedAxios.get.mockResolvedValue({ status: 200, data: { data: [] } });
+    await getRelevantLifecycleAppstreams(major);
+    await getAllLifecycleAppstreams(major);
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      1,
+      `/api/roadmap/v2/relevant/lifecycle/app-streams?related=true&major=${major}`,
+      expect.any(Object)
+    );
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      2,
+      `/api/roadmap/v2/lifecycle/app-streams/${major}/streams`,
+      expect.any(Object)
+    );
+  });
+});
 
 describe('Systems API functions', () => {
   beforeEach(() => {
@@ -75,82 +102,26 @@ describe('Systems API functions', () => {
       expect(result.data[0].display_name).toBe('host-1');
     });
 
-    describe('unknown minor version compatibility', () => {
-      const hosts = [
-        { id: 'b', display_name: 'server-alpha', os_major: 9, os_minor: null },
-        { id: 'c', display_name: 'server-beta', os_major: 9, os_minor: null },
-        { id: 'a', display_name: 'server-alpha', os_major: 9, os_minor: null },
-        { id: 'd', display_name: 'unmatched', os_major: 9, os_minor: null },
-      ];
-      const rows = [
-        { major: 9, minor: 0, lifecycle_type: 'mainline', systems_detail: [{ ...hosts[0], id: 'wrong-minor' }] },
-        {
-          major: 8,
-          minor: null,
-          lifecycle_type: 'mainline',
-          systems_detail: [{ ...hosts[0], id: 'wrong-major' }],
-        },
-        { major: 9, minor: null, lifecycle_type: 'EUS', systems_detail: [{ ...hosts[0], id: 'eus-host' }] },
-        { major: 9, minor: null, lifecycle_type: 'mainline', systems_detail: hosts },
-      ];
-
-      beforeEach(() => {
-        mockedAxios.get.mockResolvedValue({ status: 200, data: { data: rows } });
-      });
-
-      it('fetches existing v1 host details and matches the exact major, null minor and lifecycle', async () => {
-        const result = await getRhelSystems(9, null);
-        expect(mockedAxios.get).toHaveBeenCalledTimes(1);
-        expect(mockedAxios.get).toHaveBeenCalledWith(
-          '/api/roadmap/v1/relevant/lifecycle/rhel',
-          expect.any(Object)
+    describe('unknown minor version', () => {
+      it.each([null, 0])('keeps minor %s distinct and uses v2 pagination', async (minor) => {
+        mockedAxios.get.mockResolvedValue(mockSystemsResponse);
+        await getRhelSystems(9, minor, 'EUS', { offset: 10, limit: 20, search: 'SERVER', sort_order: 'desc' });
+        const url = new URL(mockedAxios.get.mock.calls[0][0], 'http://localhost');
+        expect(url.pathname).toBe(
+          `/api/roadmap/v2/relevant/lifecycle/rhel/9${minor === null ? '' : '/0'}/systems`
         );
-        expect(result.meta).toEqual({ count: 4, total: 4 });
-        expect(result.data.map((host) => host.id)).toEqual(['a', 'b', 'c', 'd']);
-        expect(result.data.every((host) => host.os_minor === null)).toBe(true);
-        expect((await getRhelSystems(9, null, 'EUS')).data.map((host) => host.id)).toEqual(['eus-host']);
+        expect(Object.fromEntries(url.searchParams)).toEqual({
+          lifecycle_type: 'EUS',
+          offset: '10',
+          limit: '20',
+          search: 'SERVER',
+          sort_order: 'desc',
+        });
+        expect(mockedAxios.get).toHaveBeenCalledTimes(1);
       });
-
-      it.each([
-        { sort_order: 'asc' as const, expected: ['b', 'c'] },
-        { sort_order: 'desc' as const, expected: ['b', 'a'] },
-      ])(
-        'searches before pagination and sorts $sort_order with a stable ID tie-break',
-        async ({ sort_order, expected }) => {
-          const result = await getRhelSystems(9, null, 'mainline', {
-            offset: 1,
-            limit: 2,
-            search: 'SERVER',
-            sort_order,
-          });
-          expect(result.meta).toEqual({ count: 2, total: 3 });
-          expect(result.data.map((host) => host.id)).toEqual(expected);
-          expect(hosts.map((host) => host.id)).toEqual(['b', 'c', 'a', 'd']);
-        }
-      );
-
-      it('returns an empty page while retaining the filtered total for page correction', async () => {
-        const result = await getRhelSystems(9, null, 'mainline', { offset: 20, limit: 10 });
-        expect(result).toEqual({ meta: { count: 0, total: 4 }, data: [] });
-      });
-
-      it('returns an empty result if the matching row has disappeared', async () => {
-        expect(await getRhelSystems(10, null)).toEqual({ meta: { count: 0, total: 0 }, data: [] });
-      });
-
-      it('propagates v1 authorization errors instead of treating them as empty results', async () => {
+      it('propagates authorization errors for unknown minor', async () => {
         mockedAxios.get.mockRejectedValue({ response: { data: { detail: 'Not authorized' }, status: 403 } });
         await expect(getRhelSystems(9, null)).rejects.toMatchObject({ name: 'ApiError', status_code: 403 });
-      });
-
-      it('keeps minor zero on the v2 path', async () => {
-        mockedAxios.get.mockResolvedValue(mockSystemsResponse);
-        await getRhelSystems(9, 0);
-        expect(mockedAxios.get).toHaveBeenCalledWith(
-          '/api/roadmap/v2/relevant/lifecycle/rhel/9/0/systems',
-          expect.any(Object)
-        );
-        expect(mockedAxios.get).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -174,6 +145,15 @@ describe('Systems API functions', () => {
   });
 
   describe('getAppStreamSystems', () => {
+    it('encodes the exact parent identity, preserving null minor', async () => {
+      mockedAxios.get.mockResolvedValue(mockSystemsResponse);
+      const stream_id = JSON.stringify(['Node.js 22', 'Node.js 22', 8, null]);
+      await getAppStreamSystems('nodejs', 8, null, { stream_id });
+      const url = new URL(mockedAxios.get.mock.calls[0][0], 'http://localhost');
+      expect(url.searchParams.get('stream_id')).toBe(stream_id);
+      expect(url.searchParams.has('os_minor')).toBe(false);
+    });
+
     it('constructs correct URL with required params', async () => {
       mockedAxios.get.mockResolvedValue(mockSystemsResponse);
 

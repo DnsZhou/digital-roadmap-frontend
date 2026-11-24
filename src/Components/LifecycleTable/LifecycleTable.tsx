@@ -381,14 +381,17 @@ export const LifecycleTable: React.FunctionComponent<LifecycleTableProps> = ({
                     onClick={(event) => {
                       handleModalToggle(event);
                       setModalDataName(String(repo.display_name));
-                      // TODO: Use the backend's canonical app-stream identity once the
-                      // systems endpoint supports it. name + RHEL version is not unique
-                      // (for example, Node.js 22 and Node.js 24 on RHEL 8.10).
                       setModalIdentifier({
                         type: 'appStream',
                         name: repo.name,
                         osMajor: repo.os_major,
                         osMinor: repo.os_minor,
+                        streamId: JSON.stringify([
+                          repo.display_name,
+                          repo.application_stream_name,
+                          repo.os_major,
+                          repo.os_minor ?? null,
+                        ]),
                       });
                     }}
                   >
